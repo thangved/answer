@@ -3,10 +3,7 @@ package user
 import (
 	"context"
 	"encoding/json"
-	"net/mail"
-	"strings"
 	"time"
-	"unicode"
 
 	"xorm.io/builder"
 
@@ -15,27 +12,27 @@ import (
 	"github.com/answerdev/answer/internal/base/reason"
 	"github.com/answerdev/answer/internal/entity"
 	"github.com/answerdev/answer/internal/service/auth"
-	"github.com/answerdev/answer/internal/service/user_backyard"
+	"github.com/answerdev/answer/internal/service/user_admin"
 	"github.com/segmentfault/pacman/errors"
 	"github.com/segmentfault/pacman/log"
 )
 
-// userBackyardRepo user repository
-type userBackyardRepo struct {
+// userAdminRepo user repository
+type userAdminRepo struct {
 	data     *data.Data
 	authRepo auth.AuthRepo
 }
 
-// NewUserBackyardRepo new repository
-func NewUserBackyardRepo(data *data.Data, authRepo auth.AuthRepo) user_backyard.UserBackyardRepo {
-	return &userBackyardRepo{
+// NewUserAdminRepo new repository
+func NewUserAdminRepo(data *data.Data, authRepo auth.AuthRepo) user_admin.UserAdminRepo {
+	return &userAdminRepo{
 		data:     data,
 		authRepo: authRepo,
 	}
 }
 
 // UpdateUserStatus update user status
-func (ur *userBackyardRepo) UpdateUserStatus(ctx context.Context, userID string, userStatus, mailStatus int,
+func (ur *userAdminRepo) UpdateUserStatus(ctx context.Context, userID string, userStatus, mailStatus int,
 	email string,
 ) (err error) {
 	cond := &entity.User{Status: userStatus, MailStatus: mailStatus, EMail: email}
@@ -64,8 +61,26 @@ func (ur *userBackyardRepo) UpdateUserStatus(ctx context.Context, userID string,
 	return
 }
 
+// AddUser add user
+func (ur *userAdminRepo) AddUser(ctx context.Context, user *entity.User) (err error) {
+	_, err = ur.data.DB.Insert(user)
+	if err != nil {
+		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
+	}
+	return
+}
+
+// UpdateUserPassword update user password
+func (ur *userAdminRepo) UpdateUserPassword(ctx context.Context, userID string, password string) (err error) {
+	_, err = ur.data.DB.ID(userID).Update(&entity.User{Pass: password})
+	if err != nil {
+		return errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
+	}
+	return
+}
+
 // GetUserInfo get user info
-func (ur *userBackyardRepo) GetUserInfo(ctx context.Context, userID string) (user *entity.User, exist bool, err error) {
+func (ur *userAdminRepo) GetUserInfo(ctx context.Context, userID string) (user *entity.User, exist bool, err error) {
 	user = &entity.User{}
 	exist, err = ur.data.DB.ID(userID).Get(user)
 	if err != nil {
@@ -74,50 +89,39 @@ func (ur *userBackyardRepo) GetUserInfo(ctx context.Context, userID string) (use
 	return
 }
 
+// GetUserInfoByEmail get user info
+func (ur *userAdminRepo) GetUserInfoByEmail(ctx context.Context, email string) (user *entity.User, exist bool, err error) {
+	userInfo := &entity.User{}
+	exist, err = ur.data.DB.Where("e_mail = ?", email).
+		Where("status != ?", entity.UserStatusDeleted).Get(userInfo)
+	if err != nil {
+		err = errors.InternalServer(reason.DatabaseError).WithError(err).WithStack()
+	}
+	return
+}
+
 // GetUserPage get user page
-func (ur *userBackyardRepo) GetUserPage(ctx context.Context, page, pageSize int, user *entity.User, query string) (users []*entity.User, total int64, err error) {
+func (ur *userAdminRepo) GetUserPage(ctx context.Context, page, pageSize int, user *entity.User,
+	usernameOrDisplayName string, isStaff bool) (users []*entity.User, total int64, err error) {
 	users = make([]*entity.User, 0)
 	session := ur.data.DB.NewSession()
 	switch user.Status {
 	case entity.UserStatusDeleted:
-		session.Desc("deleted_at")
+		session.Desc("user.deleted_at")
 	case entity.UserStatusSuspended:
-		session.Desc("suspended_at")
+		session.Desc("user.suspended_at")
 	default:
-		session.Desc("created_at")
+		session.Desc("user.created_at")
 	}
 
-	if len(query) > 0 {
-		if email, e := mail.ParseAddress(query); e == nil {
-			session.And(builder.Eq{"e_mail": email.Address})
-		} else {
-			var (
-				idSearch = false
-				id       = ""
-			)
-
-			if strings.Contains(query, "user:") {
-				idSearch = true
-				id = strings.TrimSpace(strings.TrimPrefix(query, "user:"))
-				for _, r := range id {
-					if !unicode.IsDigit(r) {
-						idSearch = false
-						break
-					}
-				}
-			}
-
-			if idSearch {
-				session.And(builder.Eq{
-					"id": id,
-				})
-			} else {
-				session.And(builder.Or(
-					builder.Like{"username", query},
-					builder.Like{"display_name", query},
-				))
-			}
-		}
+	if len(usernameOrDisplayName) > 0 {
+		session.And(builder.Or(
+			builder.Like{"user.username", usernameOrDisplayName},
+			builder.Like{"user.display_name", usernameOrDisplayName},
+		))
+	}
+	if isStaff {
+		session.Join("INNER", "user_role_rel", "user.id = user_role_rel.user_id AND user_role_rel.role_id > 1")
 	}
 
 	total, err = pager.Help(page, pageSize, &users, user, session)

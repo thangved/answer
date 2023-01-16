@@ -19,6 +19,7 @@ import (
 	"github.com/answerdev/answer/internal/repo/reason"
 	"github.com/answerdev/answer/internal/repo/report"
 	"github.com/answerdev/answer/internal/repo/revision"
+	"github.com/answerdev/answer/internal/repo/role"
 	"github.com/answerdev/answer/internal/repo/search_common"
 	"github.com/answerdev/answer/internal/repo/site_info"
 	"github.com/answerdev/answer/internal/repo/tag"
@@ -43,7 +44,7 @@ var ProviderSetRepo = wire.NewSet(
 	activity_common.NewVoteRepo,
 	config.NewConfigRepo,
 	user.NewUserRepo,
-	user.NewUserBackyardRepo,
+	user.NewUserAdminRepo,
 	rank.NewUserRankRepo,
 	question.NewQuestionRepo,
 	answer.NewAnswerRepo,
@@ -67,4 +68,8 @@ var ProviderSetRepo = wire.NewSet(
 	reason.NewReasonRepo,
 	site_info.NewSiteInfo,
 	notification.NewNotificationRepo,
+	role.NewRoleRepo,
+	role.NewUserRoleRelRepo,
+	role.NewRolePowerRelRepo,
+	role.NewPowerRepo,
 )

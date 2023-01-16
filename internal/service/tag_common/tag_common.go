@@ -24,7 +24,7 @@ type TagCommonRepo interface {
 	AddTagList(ctx context.Context, tagList []*entity.Tag) (err error)
 	GetTagListByIDs(ctx context.Context, ids []string) (tagList []*entity.Tag, err error)
 	GetTagBySlugName(ctx context.Context, slugName string) (tagInfo *entity.Tag, exist bool, err error)
-	GetTagListByName(ctx context.Context, name string, limit int, hasReserved bool) (tagList []*entity.Tag, err error)
+	GetTagListByName(ctx context.Context, name string, hasReserved bool) (tagList []*entity.Tag, err error)
 	GetTagListByNames(ctx context.Context, names []string) (tagList []*entity.Tag, err error)
 	GetTagByID(ctx context.Context, tagID string, includeDeleted bool) (tag *entity.Tag, exist bool, err error)
 	GetTagPage(ctx context.Context, page, pageSize int, tag *entity.Tag, queryCond string) (tagList []*entity.Tag, total int64, err error)
@@ -79,7 +79,7 @@ func NewTagCommonService(
 
 // SearchTagLike get tag list all
 func (ts *TagCommonService) SearchTagLike(ctx context.Context, req *schema.SearchTagLikeReq) (resp []schema.SearchTagLikeResp, err error) {
-	tags, err := ts.tagCommonRepo.GetTagListByName(ctx, req.Tag, 5, req.IsAdmin)
+	tags, err := ts.tagCommonRepo.GetTagListByName(ctx, req.Tag, req.IsAdmin)
 	if err != nil {
 		return
 	}
@@ -162,6 +162,9 @@ func (ts *TagCommonService) SetTagsAttribute(ctx context.Context, tags []string,
 	default:
 		return
 	}
+	if err != nil {
+		return err
+	}
 	err = ts.tagCommonRepo.UpdateTagsAttribute(ctx, tagslist, attribute, false)
 	if err != nil {
 		return err
@@ -212,6 +215,9 @@ func (ts *TagCommonService) ExistRecommend(ctx context.Context, tags []*schema.T
 // GetObjectTag get object tag
 func (ts *TagCommonService) GetObjectTag(ctx context.Context, objectId string) (objTags []*schema.TagResp, err error) {
 	tagsInfoList, err := ts.GetObjectEntityTag(ctx, objectId)
+	if err != nil {
+		return nil, err
+	}
 	return ts.TagFormat(ctx, tagsInfoList)
 }
 
@@ -324,28 +330,31 @@ func (ts *TagCommonService) tagFormatRecommendAndReserved(ctx context.Context, t
 // BatchGetObjectTag batch get object tag
 func (ts *TagCommonService) BatchGetObjectTag(ctx context.Context, objectIds []string) (map[string][]*schema.TagResp, error) {
 	objectIDTagMap := make(map[string][]*schema.TagResp)
-	tagIDList := make([]string, 0)
-	tagsInfoMap := make(map[string]*entity.Tag)
-
-	tagList, err := ts.tagRelRepo.BatchGetObjectTagRelList(ctx, objectIds)
+	objectTagRelList, err := ts.tagRelRepo.BatchGetObjectTagRelList(ctx, objectIds)
 	if err != nil {
 		return objectIDTagMap, err
 	}
-	for _, tag := range tagList {
+	tagIDList := make([]string, 0)
+	for _, tag := range objectTagRelList {
 		tagIDList = append(tagIDList, tag.TagID)
 	}
 	tagsInfoList, err := ts.GetTagListByIDs(ctx, tagIDList)
 	if err != nil {
 		return objectIDTagMap, err
 	}
-	for _, item := range tagsInfoList {
-		tagsInfoMap[item.ID] = item
+	tagsInfoMapping := make(map[string]*entity.Tag)
+	tagsRank := make(map[string]int) // Used for sorting
+	for idx, item := range tagsInfoList {
+		tagsInfoMapping[item.ID] = item
+		tagsRank[item.ID] = idx
 	}
-	for _, item := range tagList {
-		_, ok := tagsInfoMap[item.TagID]
+
+	for _, item := range objectTagRelList {
+		_, ok := tagsInfoMapping[item.TagID]
 		if ok {
-			tagInfo := tagsInfoMap[item.TagID]
+			tagInfo := tagsInfoMapping[item.TagID]
 			t := &schema.TagResp{
+				ID:              tagInfo.ID,
 				SlugName:        tagInfo.SlugName,
 				DisplayName:     tagInfo.DisplayName,
 				MainTagSlugName: tagInfo.MainTagSlugName,
@@ -355,12 +364,10 @@ func (ts *TagCommonService) BatchGetObjectTag(ctx context.Context, objectIds []s
 			objectIDTagMap[item.ObjectID] = append(objectIDTagMap[item.ObjectID], t)
 		}
 	}
-	for _, taglist := range objectIDTagMap {
-		sort.SliceStable(taglist, func(i, j int) bool {
-			return taglist[i].Reserved
-		})
-		sort.SliceStable(taglist, func(i, j int) bool {
-			return taglist[i].Recommend
+	// The sorting in tagsRank is correct, object tags should be sorted by tagsRank
+	for _, objectTags := range objectIDTagMap {
+		sort.SliceStable(objectTags, func(i, j int) bool {
+			return tagsRank[objectTags[i].ID] < tagsRank[objectTags[j].ID]
 		})
 	}
 	return objectIDTagMap, nil
@@ -436,16 +443,17 @@ func (ts *TagCommonService) CheckTagsIsChange(ctx context.Context, tagNameList, 
 		check[item] = true
 	}
 	for _, value := range check {
-		if value == false {
+		if !value {
 			return true
 		}
 	}
 	return false
 }
 
-func (ts *TagCommonService) CheckChangeReservedTag(ctx context.Context, oldobjectTagData, objectTagData []*entity.Tag) (bool, []string) {
+func (ts *TagCommonService) CheckChangeReservedTag(ctx context.Context, oldobjectTagData, objectTagData []*entity.Tag) (bool, bool, []string, []string) {
 	reservedTagsMap := make(map[string]bool)
 	needTagsMap := make([]string, 0)
+	notNeedTagsMap := make([]string, 0)
 	for _, tag := range objectTagData {
 		if tag.Reserved {
 			reservedTagsMap[tag.SlugName] = true
@@ -456,14 +464,27 @@ func (ts *TagCommonService) CheckChangeReservedTag(ctx context.Context, oldobjec
 			_, ok := reservedTagsMap[tag.SlugName]
 			if !ok {
 				needTagsMap = append(needTagsMap, tag.SlugName)
+			} else {
+				reservedTagsMap[tag.SlugName] = false
 			}
 		}
 	}
-	if len(needTagsMap) > 0 {
-		return false, needTagsMap
+
+	for k, v := range reservedTagsMap {
+		if v {
+			notNeedTagsMap = append(notNeedTagsMap, k)
+		}
 	}
 
-	return true, []string{}
+	if len(needTagsMap) > 0 {
+		return false, true, needTagsMap, []string{}
+	}
+
+	if len(notNeedTagsMap) > 0 {
+		return true, false, []string{}, notNeedTagsMap
+	}
+
+	return true, true, []string{}, []string{}
 }
 
 // ObjectChangeTag change object tag list
@@ -475,7 +496,7 @@ func (ts *TagCommonService) ObjectChangeTag(ctx context.Context, objectTagData *
 	thisObjTagNameList := make([]string, 0)
 	thisObjTagIDList := make([]string, 0)
 	for _, t := range objectTagData.Tags {
-		t.SlugName = strings.ToLower(t.SlugName)
+		// t.SlugName = strings.ToLower(t.SlugName)
 		thisObjTagNameList = append(thisObjTagNameList, t.SlugName)
 	}
 
@@ -487,13 +508,13 @@ func (ts *TagCommonService) ObjectChangeTag(ctx context.Context, objectTagData *
 
 	tagInDbMapping := make(map[string]*entity.Tag)
 	for _, tag := range tagListInDb {
-		tagInDbMapping[tag.SlugName] = tag
+		tagInDbMapping[strings.ToLower(tag.SlugName)] = tag
 		thisObjTagIDList = append(thisObjTagIDList, tag.ID)
 	}
 
 	addTagList := make([]*entity.Tag, 0)
 	for _, tag := range objectTagData.Tags {
-		_, ok := tagInDbMapping[tag.SlugName]
+		_, ok := tagInDbMapping[strings.ToLower(tag.SlugName)]
 		if ok {
 			continue
 		}
@@ -641,7 +662,9 @@ func (ts *TagCommonService) UpdateTag(ctx context.Context, req *schema.UpdateTag
 		return errors.BadRequest(reason.TagNotFound)
 	}
 	//If the content is the same, ignore it
-	if tagInfo.OriginalText == req.OriginalText {
+	if tagInfo.OriginalText == req.OriginalText &&
+		tagInfo.DisplayName == req.DisplayName &&
+		tagInfo.SlugName == req.SlugName {
 		return nil
 	}
 

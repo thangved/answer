@@ -106,16 +106,16 @@ func FormatAvatarInfo(avatarJson string) string {
 	if avatarJson == "" {
 		return ""
 	}
-	AvatarInfo := &AvatarInfo{}
-	err := json.Unmarshal([]byte(avatarJson), AvatarInfo)
+	avatarInfo := &AvatarInfo{}
+	err := json.Unmarshal([]byte(avatarJson), avatarInfo)
 	if err != nil {
 		return ""
 	}
-	switch AvatarInfo.Type {
+	switch avatarInfo.Type {
 	case "gravatar":
-		return AvatarInfo.Gravatar
+		return avatarInfo.Gravatar
 	case "custom":
-		return AvatarInfo.Custom
+		return avatarInfo.Custom
 	default:
 		return ""
 	}
@@ -228,12 +228,14 @@ type UserEmailLogin struct {
 // UserRegisterReq user register request
 type UserRegisterReq struct {
 	// name
-	Name string `validate:"required,gt=4,lte=30" json:"name"`
+	Name string `validate:"required,gt=3,lte=30" json:"name"`
 	// email
 	Email string `validate:"required,email,gt=0,lte=500" json:"e_mail" `
 	// password
-	Pass string `validate:"required,gte=8,lte=32" json:"pass"`
-	IP   string `json:"-" `
+	Pass        string `validate:"required,gte=8,lte=32" json:"pass"`
+	IP          string `json:"-" `
+	CaptchaID   string `json:"captcha_id"`   // captcha_id
+	CaptchaCode string `json:"captcha_code"` // captcha_code
 }
 
 func (u *UserRegisterReq) Check() (errFields []*validator.FormErrorField, err error) {
@@ -275,7 +277,7 @@ type UpdateInfoRequest struct {
 	// display_name
 	DisplayName string `validate:"required,gt=0,lte=30" json:"display_name"`
 	// username
-	Username string `validate:"omitempty,gt=0,lte=30" json:"username"`
+	Username string `validate:"omitempty,gt=3,lte=30" json:"username"`
 	// avatar
 	Avatar AvatarInfo `json:"avatar"`
 	// bio
@@ -298,12 +300,13 @@ type AvatarInfo struct {
 
 func (u *UpdateInfoRequest) Check() (errFields []*validator.FormErrorField, err error) {
 	if len(u.Username) > 0 {
+		errFields := make([]*validator.FormErrorField, 0)
 		re := regexp.MustCompile(`^[a-z0-9._-]{4,30}$`)
 		match := re.MatchString(u.Username)
 		if !match {
 			errField := &validator.FormErrorField{
 				ErrorField: "username",
-				ErrorMsg:   err.Error(),
+				ErrorMsg:   reason.UsernameInvalid,
 			}
 			errFields = append(errFields, errField)
 			return errFields, errors.BadRequest(reason.UsernameInvalid)
@@ -347,8 +350,8 @@ func (u *UserRePassWordRequest) Check() (errFields []*validator.FormErrorField, 
 }
 
 type UserNoticeSetRequest struct {
-	UserID       string `json:"-" ` // user_id
-	NoticeSwitch bool   `json:"notice_switch" `
+	NoticeSwitch bool   `json:"notice_switch"`
+	UserID       string `json:"-"`
 }
 
 type UserNoticeSetResp struct {
@@ -368,8 +371,7 @@ type ActionRecordResp struct {
 }
 
 type UserBasicInfo struct {
-	ID          string `json:"-"` // user_id
-	IsAdmin     bool   `json:"-"`
+	ID          string `json:"id"`           // user_id
 	Username    string `json:"username" `    // name
 	Rank        int    `json:"rank" `        // rank
 	DisplayName string `json:"display_name"` // display_name
@@ -395,20 +397,6 @@ type UserChangeEmailSendCodeReq struct {
 	UserID string `json:"-"`
 }
 
-type EmailCodeContent struct {
-	Email  string `json:"e_mail"`
-	UserID string `json:"user_id"`
-}
-
-func (r *EmailCodeContent) ToJSONString() string {
-	codeBytes, _ := json.Marshal(r)
-	return string(codeBytes)
-}
-
-func (r *EmailCodeContent) FromJSONString(data string) error {
-	return json.Unmarshal([]byte(data), &r)
-}
-
 type UserChangeEmailVerifyReq struct {
 	Code    string `validate:"required,gt=0,lte=500" json:"code"`
 	Content string `json:"-"`
@@ -417,4 +405,31 @@ type UserChangeEmailVerifyReq struct {
 type UserVerifyEmailSendReq struct {
 	CaptchaID   string `validate:"omitempty,gt=0,lte=500" json:"captcha_id"`
 	CaptchaCode string `validate:"omitempty,gt=0,lte=500" json:"captcha_code"`
+}
+
+// UserRankingResp user ranking response
+type UserRankingResp struct {
+	UsersWithTheMostReputation []*UserRankingSimpleInfo `json:"users_with_the_most_reputation"`
+	UsersWithTheMostVote       []*UserRankingSimpleInfo `json:"users_with_the_most_vote"`
+	Staffs                     []*UserRankingSimpleInfo `json:"staffs"`
+}
+
+// UserRankingSimpleInfo user ranking simple info
+type UserRankingSimpleInfo struct {
+	// username
+	Username string `json:"username"`
+	// rank
+	Rank int `json:"rank"`
+	// vote
+	VoteCount int `json:"vote_count"`
+	// display name
+	DisplayName string `json:"display_name"`
+	// avatar
+	Avatar string `json:"avatar"`
+}
+
+// UserUnsubscribeEmailNotificationReq user unsubscribe email notification request
+type UserUnsubscribeEmailNotificationReq struct {
+	Code    string `validate:"required,gt=0,lte=500" json:"code"`
+	Content string `json:"-"`
 }

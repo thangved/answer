@@ -39,8 +39,21 @@ const useTagModal = (props: IProps = {}) => {
     setVisibleState(false);
   };
 
-  const onShow = () => {
+  const onShow = (searchStr = '') => {
     setVisibleState(true);
+    setFormData({
+      ...formData,
+      displayName: {
+        value: searchStr,
+        isInvalid: false,
+        errorMsg: '',
+      },
+      slugName: {
+        value: searchStr,
+        isInvalid: false,
+        errorMsg: '',
+      },
+    });
   };
 
   const checkValidated = (): boolean => {
@@ -82,13 +95,13 @@ const useTagModal = (props: IProps = {}) => {
         isInvalid: true,
         errorMsg: t('form.fields.slug_name.msg.range'),
       };
-    } else if (/[^a-z0-9+#\-.]/.test(slugName.value)) {
-      bol = false;
-      formData.slugName = {
-        value: slugName.value,
-        isInvalid: true,
-        errorMsg: t('form.fields.slug_name.msg.character'),
-      };
+      // } else if (/[^a-z0-9+#\-.]/.test(slugName.value)) {
+      //   bol = false;
+      //   formData.slugName = {
+      //     value: slugName.value,
+      //     isInvalid: true,
+      //     errorMsg: t('form.fields.slug_name.msg.character'),
+      //   };
     } else {
       formData.slugName = {
         value: slugName.value,
@@ -205,14 +218,14 @@ const useTagModal = (props: IProps = {}) => {
               />
 
               <Form.Text as="div">
-                {t('form.fields.slug_name.description')}
+                {t('form.fields.slug_name.msg.range')}
               </Form.Text>
               <Form.Control.Feedback type="invalid">
                 {formData.slugName.errorMsg}
               </Form.Control.Feedback>
             </Form.Group>
             <Form.Group controlId="description">
-              <Form.Label>{t('form.fields.description.label')}</Form.Label>
+              <Form.Label>{t('form.fields.desc.label')}</Form.Label>
               <Form.Control
                 className="font-monospace"
                 value={formData.description.value}

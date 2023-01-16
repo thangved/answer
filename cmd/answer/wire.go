@@ -7,12 +7,14 @@ package main
 
 import (
 	"github.com/answerdev/answer/internal/base/conf"
+	"github.com/answerdev/answer/internal/base/cron"
 	"github.com/answerdev/answer/internal/base/data"
 	"github.com/answerdev/answer/internal/base/middleware"
 	"github.com/answerdev/answer/internal/base/server"
 	"github.com/answerdev/answer/internal/base/translator"
 	"github.com/answerdev/answer/internal/controller"
-	"github.com/answerdev/answer/internal/controller_backyard"
+	"github.com/answerdev/answer/internal/controller/template_render"
+	"github.com/answerdev/answer/internal/controller_admin"
 	"github.com/answerdev/answer/internal/repo"
 	"github.com/answerdev/answer/internal/router"
 	"github.com/answerdev/answer/internal/service"
@@ -36,8 +38,10 @@ func initApplication(
 		server.ProviderSetServer,
 		router.ProviderSetRouter,
 		controller.ProviderSetController,
-		controller_backyard.ProviderSetController,
+		controller_admin.ProviderSetController,
+		templaterender.ProviderSetTemplateRenderController,
 		service.ProviderSetService,
+		cron.ProviderSetService,
 		repo.ProviderSetRepo,
 		translator.ProviderSet,
 		middleware.ProviderSetMiddleware,

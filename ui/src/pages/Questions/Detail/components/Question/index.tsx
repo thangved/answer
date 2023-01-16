@@ -1,7 +1,7 @@
 import { memo, FC, useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Row, Col, Button } from 'react-bootstrap';
+import { Button } from 'react-bootstrap';
 
 import {
   Tag,
@@ -12,8 +12,9 @@ import {
   FormatTime,
   htmlRender,
 } from '@/components';
-import { formatCount } from '@/utils';
+import { formatCount, guard } from '@/utils';
 import { following } from '@/services';
+import { pathFactory } from '@/router/pathFactory';
 
 interface Props {
   data: any;
@@ -32,6 +33,9 @@ const Index: FC<Props> = ({ data, initPage, hasAnswer, isLogged }) => {
 
   const handleFollow = (e) => {
     e.preventDefault();
+    if (!guard.tryNormalLogged(true)) {
+      return;
+    }
     following({
       object_id: data?.id,
       is_cancel: followed,
@@ -57,10 +61,14 @@ const Index: FC<Props> = ({ data, initPage, hasAnswer, isLogged }) => {
   if (!data?.id) {
     return null;
   }
+
   return (
     <div>
       <h1 className="h3 mb-3 text-wrap text-break">
-        <Link className="link-dark" reloadDocument to={`/questions/${data.id}`}>
+        <Link
+          className="link-dark"
+          reloadDocument
+          to={pathFactory.questionLanding(data.id, data.url_title)}>
           {data.title}
           {data.status === 2
             ? ` [${t('closed', { keyPrefix: 'question' })}]`
@@ -117,19 +125,20 @@ const Index: FC<Props> = ({ data, initPage, hasAnswer, isLogged }) => {
         }}
       />
 
-      <Row className="mt-4 mb-3">
-        <Col lg={5} className="mb-3 mb-md-0">
+      <div className="d-block d-md-flex flex-wrap mt-4 mb-3">
+        <div className="mb-3 mb-md-0 me-4 flex-grow-1">
           <Operate
             qid={data?.id}
             type="question"
             memberActions={data?.member_actions}
             title={data.title}
+            slugTitle={data.url_title}
             hasAnswer={hasAnswer}
             isAccepted={Boolean(data?.accepted_answer_id)}
             callback={initPage}
           />
-        </Col>
-        <Col lg={3} className="mb-3 mb-md-0">
+        </div>
+        <div style={{ minWidth: '196px' }} className="mb-3 me-4 mb-md-0">
           {data.update_user_info &&
           data.update_user_info?.username !== data.user_info?.username ? (
             <UserCard
@@ -154,8 +163,8 @@ const Index: FC<Props> = ({ data, initPage, hasAnswer, isLogged }) => {
               className="text-secondary fs-14"
             />
           )}
-        </Col>
-        <Col lg={3}>
+        </div>
+        <div style={{ minWidth: '196px' }}>
           <UserCard
             data={data?.user_info}
             time={data.create_time}
@@ -163,8 +172,8 @@ const Index: FC<Props> = ({ data, initPage, hasAnswer, isLogged }) => {
             isLogged={isLogged}
             timelinePath={`/posts/${data.id}/timeline`}
           />
-        </Col>
-      </Row>
+        </div>
+      </div>
 
       <Comment
         objectId={data?.id}

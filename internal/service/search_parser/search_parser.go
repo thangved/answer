@@ -49,7 +49,7 @@ func (sp *SearchParser) ParseStructure(dto *schema.SearchDTO) (
 		all           = 0
 		q             = 0
 		a             = 0
-		withWords     = []string{}
+		withWords     []string
 		limitWords    = 5
 	)
 
@@ -112,7 +112,12 @@ func (sp *SearchParser) ParseStructure(dto *schema.SearchDTO) (
 		a = 1
 	}
 
-	words = strings.Split(query, " ")
+	if len(strings.TrimSpace(query)) > 0 {
+		words = strings.Split(strings.TrimSpace(query), " ")
+	} else {
+		words = []string{}
+	}
+
 	if len(withWords) > 0 {
 		words = append(withWords, words...)
 	}
@@ -127,9 +132,16 @@ func (sp *SearchParser) ParseStructure(dto *schema.SearchDTO) (
 		if len(words) > 0 {
 			searchType = "all"
 			all = 1
+		} else if isAnswer {
+			searchType = "answer"
+			a = 1
+			all = 0
+			q = 0
 		} else {
 			searchType = "question"
 			q = 1
+			all = 0
+			a = 0
 		}
 	}
 
@@ -160,13 +172,14 @@ func (sp *SearchParser) parseTags(query *string) (tags []string) {
 	if len(res) == 0 {
 		return
 	}
-	tags = make([]string, len(res))
-	for i, item := range res {
+
+	tags = []string{}
+	for _, item := range res {
 		tag, exists, err := sp.tagCommonService.GetTagBySlugName(context.TODO(), item[1])
 		if err != nil || !exists {
 			continue
 		}
-		tags[i] = tag.ID
+		tags = append(tags, tag.ID)
 	}
 
 	// limit maximum 5 tags
@@ -189,16 +202,16 @@ func (sp *SearchParser) parseUserID(query *string, currentUserID string) (userID
 
 	re := regexp.MustCompile(exprUserID)
 	res := re.FindStringSubmatch(q)
-	if len(res) == 2 {
+	if strings.Contains(q, exprMe) {
+		userID = currentUserID
+		q = strings.ReplaceAll(q, exprMe, "")
+	} else if len(res) == 2 {
 		name := res[1]
-		user, has, err := sp.userCommon.GetUserBasicInfoByUserName(nil, name)
+		user, has, err := sp.userCommon.GetUserBasicInfoByUserName(context.TODO(), name)
 		if err == nil && has {
 			userID = user.ID
 			q = re.ReplaceAllString(q, "")
 		}
-	} else if strings.Index(q, exprMe) != -1 {
-		userID = currentUserID
-		q = strings.ReplaceAll(q, exprMe, "")
 	}
 	*query = strings.TrimSpace(q)
 	return
@@ -233,6 +246,9 @@ func (sp *SearchParser) parseWithin(query *string) (words []string) {
 	matches := re.FindAllStringSubmatch(q, -1)
 	words = []string{}
 	for _, match := range matches {
+		if len(match[1]) == 0 {
+			continue
+		}
 		words = append(words, match[1])
 	}
 	q = re.ReplaceAllString(q, "")
@@ -247,7 +263,7 @@ func (sp *SearchParser) parseNotAccepted(query *string) (notAccepted bool) {
 		expr = `hasaccepted:no`
 	)
 
-	if strings.Index(q, expr) != -1 {
+	if strings.Contains(q, expr) {
 		q = strings.ReplaceAll(q, expr, "")
 		notAccepted = true
 	}
@@ -263,7 +279,7 @@ func (sp *SearchParser) parseIsQuestion(query *string) (isQuestion bool) {
 		expr = `is:question`
 	)
 
-	if strings.Index(q, expr) == 0 {
+	if strings.Contains(q, expr) {
 		q = strings.ReplaceAll(q, expr, "")
 		isQuestion = true
 	}
@@ -316,9 +332,9 @@ func (sp *SearchParser) parseAccepted(query *string) (accepted bool) {
 		expr = `isaccepted:yes`
 	)
 
-	if strings.Index(q, expr) != -1 {
+	if strings.Contains(q, expr) {
 		accepted = true
-		strings.ReplaceAll(q, expr, "")
+		q = strings.ReplaceAll(q, expr, "")
 	}
 
 	*query = strings.TrimSpace(q)
@@ -350,7 +366,7 @@ func (sp *SearchParser) parseIsAnswer(query *string) (isAnswer bool) {
 		expr = `is:answer`
 	)
 
-	if strings.Index(q, expr) != -1 {
+	if strings.Contains(q, expr) {
 		isAnswer = true
 		q = strings.ReplaceAll(q, expr, "")
 	}

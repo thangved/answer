@@ -1,5 +1,10 @@
 package schema
 
+import (
+	"github.com/answerdev/answer/internal/base/validator"
+	"github.com/answerdev/answer/pkg/converter"
+)
+
 // RemoveAnswerReq delete answer request
 type RemoveAnswerReq struct {
 	// answer id
@@ -10,8 +15,8 @@ type RemoveAnswerReq struct {
 }
 
 const (
-	AnswerAdoptedFailed = 1
-	AnswerAdoptedEnable = 2
+	AnswerAcceptedFailed = 1
+	AnswerAcceptedEnable = 2
 )
 
 type AnswerAddReq struct {
@@ -19,6 +24,11 @@ type AnswerAddReq struct {
 	Content    string `json:"content" `     // content
 	HTML       string `json:"html" `        // html
 	UserID     string `json:"-" `           // user_id
+}
+
+func (req *AnswerAddReq) Check() (errFields []*validator.FormErrorField, err error) {
+	req.HTML = converter.Markdown2HTML(req.Content)
+	return nil, nil
 }
 
 type AnswerUpdateReq struct {
@@ -32,6 +42,11 @@ type AnswerUpdateReq struct {
 	NoNeedReview bool   `json:"-"`
 	// whether user can edit it
 	CanEdit bool `json:"-"`
+}
+
+func (req *AnswerUpdateReq) Check() (errFields []*validator.FormErrorField, err error) {
+	req.HTML = converter.Markdown2HTML(req.Content)
+	return nil, nil
 }
 
 // AnswerUpdateResp answer update resp
@@ -59,7 +74,7 @@ type AnswerInfo struct {
 	HTML           string         `json:"html" xorm:"html"`               // html
 	CreateTime     int64          `json:"create_time" xorm:"created"`     // create_time
 	UpdateTime     int64          `json:"update_time" xorm:"updated"`     // update_time
-	Adopted        int            `json:"adopted"`                        // 1 Failed 2 Adopted
+	Accepted       int            `json:"accepted"`                       // 1 Failed 2 accepted
 	UserID         string         `json:"-" `
 	UpdateUserID   string         `json:"-" `
 	UserInfo       *UserBasicInfo `json:"user_info,omitempty"`
@@ -79,7 +94,7 @@ type AdminAnswerInfo struct {
 	Description  string         `json:"description"`
 	CreateTime   int64          `json:"create_time"`
 	UpdateTime   int64          `json:"update_time"`
-	Adopted      int            `json:"adopted"`
+	Accepted     int            `json:"accepted"`
 	UserID       string         `json:"-" `
 	UpdateUserID string         `json:"-" `
 	UserInfo     *UserBasicInfo `json:"user_info"`
@@ -89,7 +104,7 @@ type AdminAnswerInfo struct {
 	} `json:"question_info"`
 }
 
-type AnswerAdoptedReq struct {
+type AnswerAcceptedReq struct {
 	QuestionID string `json:"question_id"`
 	AnswerID   string `json:"answer_id"`
 	UserID     string `json:"-" `

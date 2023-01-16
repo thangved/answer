@@ -1,24 +1,42 @@
 package schema
 
+import (
+	"time"
+
+	"github.com/answerdev/answer/internal/base/validator"
+	"github.com/answerdev/answer/pkg/converter"
+)
+
+const (
+	SitemapMaxSize      = 50000
+	SitemapCachekey     = "answer@sitemap"
+	SitemapPageCachekey = "answer@sitemap@page%d"
+)
+
 // RemoveQuestionReq delete question request
 type RemoveQuestionReq struct {
 	// question id
-	ID      string `validate:"required" comment:"question id" json:"id"`
+	ID      string `validate:"required" json:"id"`
 	UserID  string `json:"-" ` // user_id
 	IsAdmin bool   `json:"-"`
 }
 
 type CloseQuestionReq struct {
-	ID        string `validate:"required" comment:"question id" json:"id"`
-	UserID    string `json:"-" `          // user_id
-	CloseType int    `json:"close_type" ` // close_type
-	CloseMsg  string `json:"close_msg" `  // close_type
-	IsAdmin   bool   `json:"-"`
+	ID        string `validate:"required" json:"id"`
+	CloseType int    `json:"close_type"` // close_type
+	CloseMsg  string `json:"close_msg"`  // close_type
+	UserID    string `json:"-"`          // user_id
 }
 
 type CloseQuestionMeta struct {
 	CloseType int    `json:"close_type"`
 	CloseMsg  string `json:"close_msg"`
+}
+
+// ReopenQuestionReq reopen question request
+type ReopenQuestionReq struct {
+	QuestionID string `json:"question_id"`
+	UserID     string `json:"-"`
 }
 
 type QuestionAdd struct {
@@ -35,6 +53,16 @@ type QuestionAdd struct {
 	QuestionPermission
 }
 
+func (req *QuestionAdd) Check() (errFields []*validator.FormErrorField, err error) {
+	req.HTML = converter.Markdown2HTML(req.Content)
+	for _, tag := range req.Tags {
+		if len(tag.OriginalText) > 0 {
+			tag.ParsedText = converter.Markdown2HTML(tag.OriginalText)
+		}
+	}
+	return nil, nil
+}
+
 type QuestionPermission struct {
 	// whether user can add it
 	CanAdd bool `json:"-"`
@@ -44,6 +72,10 @@ type QuestionPermission struct {
 	CanDelete bool `json:"-"`
 	// whether user can close it
 	CanClose bool `json:"-"`
+	// whether user can reopen it
+	CanReopen bool `json:"-"`
+	// whether user can use reserved it
+	CanUseReservedTag bool `json:"-"`
 }
 
 type CheckCanQuestionUpdate struct {
@@ -69,9 +101,13 @@ type QuestionUpdate struct {
 	EditSummary string `validate:"omitempty" json:"edit_summary"`
 	// user id
 	UserID       string `json:"-"`
-	IsAdmin      bool   `json:"-"`
 	NoNeedReview bool   `json:"-"`
 	QuestionPermission
+}
+
+func (req *QuestionUpdate) Check() (errFields []*validator.FormErrorField, err error) {
+	req.HTML = converter.Markdown2HTML(req.Content)
+	return nil, nil
 }
 
 type QuestionBaseInfo struct {
@@ -88,8 +124,10 @@ type QuestionBaseInfo struct {
 type QuestionInfo struct {
 	ID                   string         `json:"id" `
 	Title                string         `json:"title" xorm:"title"`                         // title
+	UrlTitle             string         `json:"url_title" xorm:"url_title"`                 // title
 	Content              string         `json:"content" xorm:"content"`                     // content
 	HTML                 string         `json:"html" xorm:"html"`                           // html
+	Description          string         `json:"description"`                                //description
 	Tags                 []*TagResp     `json:"tags" `                                      // tags
 	ViewCount            int            `json:"view_count" xorm:"view_count"`               // view_count
 	UniqueViewCount      int            `json:"unique_view_count" xorm:"unique_view_count"` // unique_view_count
@@ -163,7 +201,7 @@ type GetCloseTypeResp struct {
 type UserAnswerInfo struct {
 	AnswerID     string `json:"answer_id"`
 	QuestionID   string `json:"question_id"`
-	Adopted      int    `json:"adopted"`
+	Accepted     int    `json:"accepted"`
 	VoteCount    int    `json:"vote_count"`
 	CreateTime   int    `json:"create_time"`
 	UpdateTime   int    `json:"update_time"`
@@ -186,18 +224,69 @@ type UserQuestionInfo struct {
 	Status           string        `json:"status"`
 }
 
-type QuestionSearch struct {
-	Page     int    `json:"page" form:"page"`           // Query number of pages
-	PageSize int    `json:"page_size" form:"page_size"` // Search page size
-	Order    string `json:"order" form:"order"`         // Search order by
-	// Tags     []string `json:"tags" form:"tags"`           // Search tag
-	Tag      string   `json:"tag" form:"tag"`           //Search tag
-	TagIDs   []string `json:"-" form:"-"`               // Search tag
-	UserName string   `json:"username" form:"username"` // Search username
-	UserID   string   `json:"-" form:"-"`
+const (
+	QuestionOrderCondNewest     = "newest"
+	QuestionOrderCondActive     = "active"
+	QuestionOrderCondFrequent   = "frequent"
+	QuestionOrderCondScore      = "score"
+	QuestionOrderCondUnanswered = "unanswered"
+)
+
+// QuestionPageReq query questions page
+type QuestionPageReq struct {
+	Page      int    `validate:"omitempty,min=1" form:"page"`
+	PageSize  int    `validate:"omitempty,min=1" form:"page_size"`
+	OrderCond string `validate:"omitempty,oneof=newest active frequent score unanswered" form:"order"`
+	Tag       string `validate:"omitempty,gt=0,lte=100" form:"tag"`
+	Username  string `validate:"omitempty,gt=0,lte=100" form:"username"`
+
+	LoginUserID      string `json:"-"`
+	UserIDBeSearched string `json:"-"`
+	TagID            string `json:"-"`
 }
 
-type CmsQuestionSearch struct {
+const (
+	QuestionPageRespOperationTypeAsked    = "asked"
+	QuestionPageRespOperationTypeAnswered = "answered"
+	QuestionPageRespOperationTypeModified = "modified"
+)
+
+type QuestionPageResp struct {
+	ID          string     `json:"id" `
+	Title       string     `json:"title"`
+	UrlTitle    string     `json:"url_title"`
+	Description string     `json:"description"`
+	Status      int        `json:"status"`
+	Tags        []*TagResp `json:"tags"`
+
+	// question statistical information
+	ViewCount       int `json:"view_count"`
+	UniqueViewCount int `json:"unique_view_count"`
+	VoteCount       int `json:"vote_count"`
+	AnswerCount     int `json:"answer_count"`
+	CollectionCount int `json:"collection_count"`
+	FollowCount     int `json:"follow_count"`
+
+	// answer information
+	AcceptedAnswerID   string    `json:"accepted_answer_id"`
+	LastAnswerID       string    `json:"last_answer_id"`
+	LastAnsweredUserID string    `json:"-"`
+	LastAnsweredAt     time.Time `json:"-"`
+
+	// operator information
+	OperatedAt    int64                     `json:"operated_at"`
+	Operator      *QuestionPageRespOperator `json:"operator"`
+	OperationType string                    `json:"operation_type"`
+}
+
+type QuestionPageRespOperator struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Rank        int    `json:"rank"`
+	DisplayName string `json:"display_name"`
+}
+
+type AdminQuestionSearch struct {
 	Page      int    `json:"page" form:"page"`           // Query number of pages
 	PageSize  int    `json:"page_size" form:"page_size"` // Search page size
 	Status    int    `json:"-" form:"-"`
@@ -208,4 +297,19 @@ type CmsQuestionSearch struct {
 type AdminSetQuestionStatusRequest struct {
 	StatusStr  string `json:"status" form:"status"`
 	QuestionID string `json:"question_id" form:"question_id"`
+}
+
+type SiteMapList struct {
+	QuestionIDs []*SiteMapQuestionInfo `json:"question_ids"`
+	MaxPageNum  []int                  `json:"max_page_num"`
+}
+
+type SiteMapPageList struct {
+	PageData []*SiteMapQuestionInfo `json:"page_data"`
+}
+
+type SiteMapQuestionInfo struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	UpdateTime string `json:"time"`
 }

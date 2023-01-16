@@ -19,8 +19,7 @@ import { useEditStatusModal } from '@/hooks';
 import * as Type from '@/common/interface';
 import { useAnswerSearch, changeAnswerStatus } from '@/services';
 import { escapeRemove } from '@/utils';
-
-import '../index.scss';
+import { pathFactory } from '@/router/pathFactory';
 
 const answerFilterItems: Type.AdminContentsFilterBy[] = ['normal', 'deleted'];
 
@@ -57,7 +56,7 @@ const Answers: FC = () => {
       Modal.confirm({
         title: t('title', { keyPrefix: 'delete' }),
         content:
-          item.adopted === 2
+          item.accepted === 2
             ? t('answer_accepted', { keyPrefix: 'delete' })
             : `<p>${t('other', { keyPrefix: 'delete' })}</p>`,
         cancelBtnVariant: 'link',
@@ -129,13 +128,17 @@ const Answers: FC = () => {
                   <Stack>
                     <Stack direction="horizontal" gap={2}>
                       <a
-                        href={`/questions/${li.question_id}/${li.id}`}
+                        href={pathFactory.answerLanding({
+                          questionId: li.question_id,
+                          slugTitle: li.question_info.url_title,
+                          answerId: li.id,
+                        })}
                         target="_blank"
                         className="text-break text-wrap"
                         rel="noreferrer">
                         {li.question_info.title}
                       </a>
-                      {li.adopted === 2 && (
+                      {li.accepted === 2 && (
                         <Icon
                           name="check-circle-fill"
                           className="ms-2 text-success"

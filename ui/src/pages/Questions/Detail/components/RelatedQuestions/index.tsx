@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '@/components';
 import { useSimilarQuestion } from '@/services';
 import { loggedUserInfoStore } from '@/stores';
+import { pathFactory } from '@/router/pathFactory';
 
 interface Props {
   id: string;
@@ -16,10 +17,14 @@ const Index: FC<Props> = ({ id }) => {
     keyPrefix: 'related_question',
   });
 
-  const { data } = useSimilarQuestion({
+  const { data, isLoading } = useSimilarQuestion({
     question_id: id,
     page_size: 5,
   });
+
+  if (isLoading) {
+    return null;
+  }
 
   return (
     <Card>
@@ -31,7 +36,7 @@ const Index: FC<Props> = ({ id }) => {
               action
               key={item.id}
               as={Link}
-              to={`/questions/${item.id}`}>
+              to={pathFactory.questionLanding(item.id, item.url_title)}>
               <div className="link-dark">{item.title}</div>
               {item.answer_count > 0 && (
                 <div

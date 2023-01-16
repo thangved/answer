@@ -19,12 +19,18 @@ export const useQueryQuestionByTitle = (title) => {
 };
 
 export const useQueryTags = (params) => {
-  return useSWR<Type.ListResult>(
+  const { data, error, mutate } = useSWR<Type.ListResult>(
     `/answer/api/v1/tags/page?${qs.stringify(params, {
       skipNulls: true,
     })}`,
     request.instance.get,
   );
+  return {
+    data,
+    isLoading: !data && !error,
+    error,
+    mutate,
+  };
 };
 
 export const useQueryRevisions = (object_id: string | undefined) => {
@@ -94,6 +100,11 @@ export const login = (params: Type.LoginReqParams) => {
 
 export const register = (params: Type.RegisterReqParams) => {
   return request.post<any>('/answer/api/v1/user/register/email', params);
+};
+
+export const getRegisterCaptcha = () => {
+  const apiUrl = '/answer/api/v1/user/register/captcha';
+  return request.get(apiUrl);
 };
 
 export const logout = () => {
@@ -247,4 +258,18 @@ export const changeEmailVerify = (params: { code: string }) => {
 
 export const getAppSettings = () => {
   return request.get<Type.SiteSettings>('/answer/api/v1/siteinfo');
+};
+
+export const reopenQuestion = (params: { question_id: string }) => {
+  return request.put('/answer/api/v1/question/reopen', params);
+};
+
+export const unsubscribe = (code: string) => {
+  const apiUrl = '/answer/api/v1/user/email/notification';
+  return request.put(apiUrl, { code });
+};
+
+export const markdownToHtml = (content: string) => {
+  const apiUrl = '/answer/api/v1/post/render';
+  return request.post(apiUrl, { content });
 };

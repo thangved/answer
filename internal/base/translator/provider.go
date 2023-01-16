@@ -51,14 +51,22 @@ func NewTranslator(c *I18n) (tr i18n.Translator, err error) {
 			return nil, fmt.Errorf("read file failed: %s %s", file.Name(), err)
 		}
 
-		// only parse the backend translation
-		translation := struct {
-			Content map[string]interface{} `yaml:"backend"`
+		// parse the backend translation
+		originalTr := struct {
+			Backend map[string]map[string]interface{} `yaml:"backend"`
+			UI      map[string]interface{}            `yaml:"ui"`
 		}{}
-		if err = yaml.Unmarshal(buf, &translation); err != nil {
+		if err = yaml.Unmarshal(buf, &originalTr); err != nil {
 			return nil, err
 		}
-		content, err := yaml.Marshal(translation.Content)
+		translation := make(map[string]interface{}, 0)
+		for k, v := range originalTr.Backend {
+			translation[k] = v
+		}
+		translation["backend"] = originalTr.Backend
+		translation["ui"] = originalTr.UI
+
+		content, err := yaml.Marshal(translation)
 		if err != nil {
 			return nil, fmt.Errorf("marshal translation content failed: %s %s", file.Name(), err)
 		}
@@ -97,4 +105,13 @@ func CheckLanguageIsValid(lang string) bool {
 		}
 	}
 	return false
+}
+
+// Tr use language to translate data. If this language translation is not available, return default english translation.
+func Tr(lang i18n.Language, data string) string {
+	translation := GlobalTrans.Tr(lang, data)
+	if translation == data {
+		return GlobalTrans.Tr(i18n.DefaultLanguage, data)
+	}
+	return translation
 }

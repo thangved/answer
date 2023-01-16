@@ -105,6 +105,7 @@ func (ts *TagService) GetTagInfo(ctx context.Context, req *schema.GetTagInfoReq)
 	resp.DisplayName = tagInfo.DisplayName
 	resp.OriginalText = tagInfo.OriginalText
 	resp.ParsedText = tagInfo.ParsedText
+	resp.Description = htmltext.FetchExcerpt(tagInfo.ParsedText, "...", 240)
 	resp.FollowCount = tagInfo.FollowCount
 	resp.QuestionCount = tagInfo.QuestionCount
 	resp.Recommend = tagInfo.Recommend
@@ -215,6 +216,9 @@ func (ts *TagService) UpdateTagSynonym(ctx context.Context, req *schema.UpdateTa
 
 	// find all exist tag
 	for _, item := range req.SynonymTagList {
+		if item.SlugName == mainTagInfo.SlugName {
+			return errors.BadRequest(reason.TagCannotSetSynonymAsItself)
+		}
 		addSynonymTagList = append(addSynonymTagList, item.SlugName)
 	}
 	tagListInDB, err := ts.tagCommonService.GetTagListByNames(ctx, addSynonymTagList)
@@ -316,13 +320,13 @@ func (ts *TagService) GetTagWithPage(ctx context.Context, req *schema.GetTagWith
 
 	resp := make([]*schema.GetTagPageResp, 0)
 	for _, tag := range tags {
-		excerpt := htmltext.FetchExcerpt(tag.ParsedText, "...", 240)
+		//excerpt := htmltext.FetchExcerpt(tag.ParsedText, "...", 240)
 		resp = append(resp, &schema.GetTagPageResp{
 			TagID:         tag.ID,
 			SlugName:      tag.SlugName,
 			DisplayName:   tag.DisplayName,
-			OriginalText:  excerpt,
-			ParsedText:    excerpt,
+			OriginalText:  tag.OriginalText,
+			ParsedText:    tag.ParsedText,
 			FollowCount:   tag.FollowCount,
 			QuestionCount: tag.QuestionCount,
 			IsFollower:    ts.checkTagIsFollow(ctx, req.UserID, tag.ID),

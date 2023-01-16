@@ -3,6 +3,7 @@ import { ListGroup, ListGroupItem } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 
 import { Icon, FormatTime, Tag, BaseUserCard } from '@/components';
+import { pathFactory } from '@/router/pathFactory';
 
 interface Props {
   visible: boolean;
@@ -15,19 +16,21 @@ const Index: FC<Props> = ({ visible, tabName, data }) => {
   if (!visible) {
     return null;
   }
+
   return (
-    <ListGroup variant="flush">
+    <ListGroup className="rounded-0">
       {data.map((item) => {
         return (
           <ListGroupItem
-            className="py-3 px-0"
+            className="py-3 px-0 bg-transparent border-start-0 border-end-0"
             key={tabName === 'questions' ? item.question_id : item.id}>
             <h6 className="mb-2">
               <a
                 className="text-break"
-                href={`/questions/${
-                  tabName === 'questions' ? item.question_id : item.id
-                }`}>
+                href={pathFactory.questionLanding(
+                  tabName === 'questions' ? item.question_id : item.id,
+                  item.url_title,
+                )}>
                 {item.title}
                 {tabName === 'questions' && item.status === 'closed'
                   ? ` [${t('closed', { keyPrefix: 'question' })}]`

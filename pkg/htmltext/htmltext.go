@@ -1,9 +1,14 @@
 package htmltext
 
 import (
-	"github.com/grokify/html-strip-tags-go"
+	"io"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/gosimple/slug"
+	strip "github.com/grokify/html-strip-tags-go"
 )
 
 // ClearText clear HTML, get the clear text
@@ -40,6 +45,25 @@ func ClearText(html string) (text string) {
 	return
 }
 
+func UrlTitle(title string) (text string) {
+	title = ClearEmoji(title)
+	title = slug.Make(title)
+	// title = strings.ReplaceAll(title, " ", "-")
+	title = url.QueryEscape(title)
+	return title
+}
+
+func ClearEmoji(s string) string {
+	ret := ""
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		if len(string(rs[i])) != 4 {
+			ret += string(rs[i])
+		}
+	}
+	return ret
+}
+
 // FetchExcerpt return the excerpt from the HTML string
 func FetchExcerpt(html, trimMarker string, limit int) (text string) {
 	if len(html) == 0 {
@@ -51,10 +75,22 @@ func FetchExcerpt(html, trimMarker string, limit int) (text string) {
 	runeText := []rune(text)
 	if len(runeText) <= limit {
 		text = string(runeText)
-	} else {
-		text = string(runeText[0:limit])
+		return
 	}
 
-	text += trimMarker
+	text = string(runeText[0:limit]) + trimMarker
 	return
+}
+
+func GetPicByUrl(Url string) string {
+	res, err := http.Get(Url)
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+	pix, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ""
+	}
+	return string(pix)
 }

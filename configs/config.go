@@ -4,3 +4,9 @@ import _ "embed"
 
 //go:embed  config.yaml
 var Config []byte
+
+//go:embed  path_ignore.yaml
+var PathIgnore []byte
+
+//go:embed  reserved-usernames.json
+var ReservedUsernames []byte

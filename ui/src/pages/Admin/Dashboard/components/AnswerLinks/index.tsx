@@ -10,16 +10,13 @@ const AnswerLinks = () => {
         <h6 className="mb-3">{t('answer_links')}</h6>
         <Row>
           <Col xs={6}>
-            <a href="https://answer.dev" target="_blank" rel="noreferrer">
+            <a href="https://answer.dev/docs" target="_blank" rel="noreferrer">
               {t('documents')}
             </a>
           </Col>
           <Col xs={6}>
-            <a
-              href="https://github.com/answerdev/answer/issues"
-              target="_blank"
-              rel="noreferrer">
-              {t('feedback')}
+            <a href="https://meta.answer.dev" target="_blank" rel="noreferrer">
+              {t('support')}
             </a>
           </Col>
         </Row>

@@ -54,7 +54,7 @@ func (ss *SearchService) Search(ctx context.Context, dto *schema.SearchDTO) (res
 			return nil, 0, nil, err
 		}
 	case "question":
-		resp, total, err = ss.searchRepo.SearchQuestions(ctx, words, notAccepted, views, answers, dto.Page, dto.Size, dto.Order)
+		resp, total, err = ss.searchRepo.SearchQuestions(ctx, words, tags, notAccepted, views, answers, dto.Page, dto.Size, dto.Order)
 	case "answer":
 		resp, total, err = ss.searchRepo.SearchAnswers(ctx, words, tags, accepted, questionID, dto.Page, dto.Size, dto.Order)
 	}

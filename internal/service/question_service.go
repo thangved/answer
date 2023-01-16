@@ -3,10 +3,12 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/answerdev/answer/internal/base/constant"
+	"github.com/answerdev/answer/internal/base/data"
 	"github.com/answerdev/answer/internal/base/handler"
 	"github.com/answerdev/answer/internal/base/reason"
 	"github.com/answerdev/answer/internal/base/translator"
@@ -23,6 +25,7 @@ import (
 	"github.com/answerdev/answer/internal/service/revision_common"
 	tagcommon "github.com/answerdev/answer/internal/service/tag_common"
 	usercommon "github.com/answerdev/answer/internal/service/user_common"
+	"github.com/answerdev/answer/pkg/htmltext"
 	"github.com/jinzhu/copier"
 	"github.com/segmentfault/pacman/errors"
 	"github.com/segmentfault/pacman/i18n"
@@ -42,6 +45,7 @@ type QuestionService struct {
 	metaService           *meta.MetaService
 	collectionCommon      *collectioncommon.CollectionCommon
 	answerActivityService *activity.AnswerActivityService
+	data                  *data.Data
 }
 
 func NewQuestionService(
@@ -53,6 +57,8 @@ func NewQuestionService(
 	metaService *meta.MetaService,
 	collectionCommon *collectioncommon.CollectionCommon,
 	answerActivityService *activity.AnswerActivityService,
+	data *data.Data,
+
 ) *QuestionService {
 	return &QuestionService{
 		questionRepo:          questionRepo,
@@ -63,6 +69,7 @@ func NewQuestionService(
 		metaService:           metaService,
 		collectionCommon:      collectionCommon,
 		answerActivityService: answerActivityService,
+		data:                  data,
 	}
 }
 
@@ -75,11 +82,6 @@ func (qs *QuestionService) CloseQuestion(ctx context.Context, req *schema.CloseQ
 		return nil
 	}
 
-	if !req.IsAdmin {
-		if questionInfo.UserID != req.UserID {
-			return errors.BadRequest(reason.QuestionCannotClose)
-		}
-	}
 	questionInfo.Status = entity.QuestionStatusClosed
 	err = qs.questionRepo.UpdateQuestionStatus(ctx, questionInfo)
 	if err != nil {
@@ -104,6 +106,30 @@ func (qs *QuestionService) CloseQuestion(ctx context.Context, req *schema.CloseQ
 	return nil
 }
 
+// ReopenQuestion reopen question
+func (qs *QuestionService) ReopenQuestion(ctx context.Context, req *schema.ReopenQuestionReq) error {
+	questionInfo, has, err := qs.questionRepo.GetQuestion(ctx, req.QuestionID)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+
+	questionInfo.Status = entity.QuestionStatusAvailable
+	err = qs.questionRepo.UpdateQuestionStatus(ctx, questionInfo)
+	if err != nil {
+		return err
+	}
+	activity_queue.AddActivity(&schema.ActivityMsg{
+		UserID:           req.UserID,
+		ObjectID:         questionInfo.ID,
+		OriginalObjectID: questionInfo.ID,
+		ActivityTypeKey:  constant.ActQuestionReopened,
+	})
+	return nil
+}
+
 // CloseMsgList list close question condition
 func (qs *QuestionService) CloseMsgList(ctx context.Context, lang i18n.Language) (
 	resp []*schema.GetCloseTypeResp, err error,
@@ -114,14 +140,34 @@ func (qs *QuestionService) CloseMsgList(ctx context.Context, lang i18n.Language)
 		return nil, errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
 	}
 	for _, t := range resp {
-		t.Name = translator.GlobalTrans.Tr(lang, t.Name)
-		t.Description = translator.GlobalTrans.Tr(lang, t.Description)
+		t.Name = translator.Tr(lang, t.Name)
+		t.Description = translator.Tr(lang, t.Description)
 	}
 	return resp, err
 }
 
-// AddQuestion add question
-func (qs *QuestionService) AddQuestion(ctx context.Context, req *schema.QuestionAdd) (questionInfo any, err error) {
+func (qs *QuestionService) AddQuestionCheckTags(ctx context.Context, Tags []*entity.Tag) ([]string, error) {
+	list := make([]string, 0)
+	for _, tag := range Tags {
+		if tag.Reserved {
+			list = append(list, tag.DisplayName)
+		}
+	}
+	if len(list) > 0 {
+		return list, errors.BadRequest(reason.RequestFormatError)
+	}
+	return []string{}, nil
+}
+func (qs *QuestionService) CheckAddQuestion(ctx context.Context, req *schema.QuestionAdd) (errorlist any, err error) {
+	if len(req.Tags) == 0 {
+		errorlist := make([]*validator.FormErrorField, 0)
+		errorlist = append(errorlist, &validator.FormErrorField{
+			ErrorField: "tags",
+			ErrorMsg:   translator.Tr(handler.GetLangByCtx(ctx), reason.TagNotFound),
+		})
+		err = errors.BadRequest(reason.RecommendTagEnter)
+		return errorlist, err
+	}
 	recommendExist, err := qs.tagCommon.ExistRecommend(ctx, req.Tags)
 	if err != nil {
 		return
@@ -130,10 +176,83 @@ func (qs *QuestionService) AddQuestion(ctx context.Context, req *schema.Question
 		errorlist := make([]*validator.FormErrorField, 0)
 		errorlist = append(errorlist, &validator.FormErrorField{
 			ErrorField: "tags",
-			ErrorMsg:   translator.GlobalTrans.Tr(handler.GetLangByCtx(ctx), reason.RecommendTagEnter),
+			ErrorMsg:   translator.Tr(handler.GetLangByCtx(ctx), reason.RecommendTagEnter),
 		})
 		err = errors.BadRequest(reason.RecommendTagEnter)
 		return errorlist, err
+	}
+
+	tagNameList := make([]string, 0)
+	for _, tag := range req.Tags {
+		tagNameList = append(tagNameList, tag.SlugName)
+	}
+	Tags, tagerr := qs.tagCommon.GetTagListByNames(ctx, tagNameList)
+	if tagerr != nil {
+		return errorlist, tagerr
+	}
+	if !req.QuestionPermission.CanUseReservedTag {
+		taglist, err := qs.AddQuestionCheckTags(ctx, Tags)
+		errMsg := fmt.Sprintf(`"%s" can only be used by moderators.`,
+			strings.Join(taglist, ","))
+		if err != nil {
+			errorlist := make([]*validator.FormErrorField, 0)
+			errorlist = append(errorlist, &validator.FormErrorField{
+				ErrorField: "tags",
+				ErrorMsg:   errMsg,
+			})
+			err = errors.BadRequest(reason.RecommendTagEnter)
+			return errorlist, err
+		}
+	}
+	return nil, nil
+}
+
+// AddQuestion add question
+func (qs *QuestionService) AddQuestion(ctx context.Context, req *schema.QuestionAdd) (questionInfo any, err error) {
+	if len(req.Tags) == 0 {
+		errorlist := make([]*validator.FormErrorField, 0)
+		errorlist = append(errorlist, &validator.FormErrorField{
+			ErrorField: "tags",
+			ErrorMsg:   translator.Tr(handler.GetLangByCtx(ctx), reason.TagNotFound),
+		})
+		err = errors.BadRequest(reason.RecommendTagEnter)
+		return errorlist, err
+	}
+	recommendExist, err := qs.tagCommon.ExistRecommend(ctx, req.Tags)
+	if err != nil {
+		return
+	}
+	if !recommendExist {
+		errorlist := make([]*validator.FormErrorField, 0)
+		errorlist = append(errorlist, &validator.FormErrorField{
+			ErrorField: "tags",
+			ErrorMsg:   translator.Tr(handler.GetLangByCtx(ctx), reason.RecommendTagEnter),
+		})
+		err = errors.BadRequest(reason.RecommendTagEnter)
+		return errorlist, err
+	}
+
+	tagNameList := make([]string, 0)
+	for _, tag := range req.Tags {
+		tagNameList = append(tagNameList, tag.SlugName)
+	}
+	Tags, tagerr := qs.tagCommon.GetTagListByNames(ctx, tagNameList)
+	if tagerr != nil {
+		return questionInfo, tagerr
+	}
+	if !req.QuestionPermission.CanUseReservedTag {
+		taglist, err := qs.AddQuestionCheckTags(ctx, Tags)
+		errMsg := fmt.Sprintf(`"%s" can only be used by moderators.`,
+			strings.Join(taglist, ","))
+		if err != nil {
+			errorlist := make([]*validator.FormErrorField, 0)
+			errorlist = append(errorlist, &validator.FormErrorField{
+				ErrorField: "tags",
+				ErrorMsg:   errMsg,
+			})
+			err = errors.BadRequest(reason.RecommendTagEnter)
+			return errorlist, err
+		}
 	}
 
 	question := &entity.Question{}
@@ -167,15 +286,6 @@ func (qs *QuestionService) AddQuestion(ctx context.Context, req *schema.Question
 		UserID:   question.UserID,
 		ObjectID: question.ID,
 		Title:    question.Title,
-	}
-
-	tagNameList := make([]string, 0)
-	for _, tag := range req.Tags {
-		tagNameList = append(tagNameList, tag.SlugName)
-	}
-	Tags, tagerr := qs.tagCommon.GetTagListByNames(ctx, tagNameList)
-	if tagerr != nil {
-		return questionInfo, tagerr
 	}
 
 	questionWithTagsRevision, err := qs.changeQuestionToRevision(ctx, question, Tags)
@@ -268,6 +378,72 @@ func (qs *QuestionService) RemoveQuestion(ctx context.Context, req *schema.Remov
 	return nil
 }
 
+func (qs *QuestionService) UpdateQuestionCheckTags(ctx context.Context, req *schema.QuestionUpdate) (errorlist []*validator.FormErrorField, err error) {
+	dbinfo, has, err := qs.questionRepo.GetQuestion(ctx, req.ID)
+	if err != nil {
+		return
+	}
+	if !has {
+		return
+	}
+
+	oldTags, tagerr := qs.tagCommon.GetObjectEntityTag(ctx, req.ID)
+	if tagerr != nil {
+		log.Error("GetObjectEntityTag error", tagerr)
+		return nil, nil
+	}
+
+	tagNameList := make([]string, 0)
+	oldtagNameList := make([]string, 0)
+	for _, tag := range req.Tags {
+		tagNameList = append(tagNameList, tag.SlugName)
+	}
+	for _, tag := range oldTags {
+		oldtagNameList = append(oldtagNameList, tag.SlugName)
+	}
+
+	isChange := qs.tagCommon.CheckTagsIsChange(ctx, tagNameList, oldtagNameList)
+
+	//If the content is the same, ignore it
+	if dbinfo.Title == req.Title && dbinfo.OriginalText == req.Content && !isChange {
+		return
+	}
+
+	Tags, tagerr := qs.tagCommon.GetTagListByNames(ctx, tagNameList)
+	if tagerr != nil {
+		log.Error("GetTagListByNames error", tagerr)
+		return nil, nil
+	}
+
+	// if user can not use reserved tag, old reserved tag can not be removed and new reserved tag can not be added.
+	if !req.CanUseReservedTag {
+		CheckOldTag, CheckNewTag, CheckOldTaglist, CheckNewTaglist := qs.CheckChangeReservedTag(ctx, oldTags, Tags)
+		if !CheckOldTag {
+			errMsg := fmt.Sprintf(`The reserved tag "%s" must be present.`,
+				strings.Join(CheckOldTaglist, ","))
+			errorlist := make([]*validator.FormErrorField, 0)
+			errorlist = append(errorlist, &validator.FormErrorField{
+				ErrorField: "tags",
+				ErrorMsg:   errMsg,
+			})
+			err = errors.BadRequest(reason.RequestFormatError).WithMsg(errMsg)
+			return errorlist, err
+		}
+		if !CheckNewTag {
+			errMsg := fmt.Sprintf(`"%s" can only be used by moderators.`,
+				strings.Join(CheckNewTaglist, ","))
+			errorlist := make([]*validator.FormErrorField, 0)
+			errorlist = append(errorlist, &validator.FormErrorField{
+				ErrorField: "tags",
+				ErrorMsg:   errMsg,
+			})
+			err = errors.BadRequest(reason.RequestFormatError).WithMsg(errMsg)
+			return errorlist, err
+		}
+	}
+	return nil, nil
+}
+
 // UpdateQuestion update question
 func (qs *QuestionService) UpdateQuestion(ctx context.Context, req *schema.QuestionUpdate) (questionInfo any, err error) {
 	var canUpdate bool
@@ -300,11 +476,7 @@ func (qs *QuestionService) UpdateQuestion(ctx context.Context, req *schema.Quest
 	question.UpdatedAt = now
 	question.PostUpdateTime = now
 	question.UserID = dbinfo.UserID
-
-	question.LastEditUserID = "0"
-	if dbinfo.UserID != req.UserID {
-		question.LastEditUserID = req.UserID
-	}
+	question.LastEditUserID = req.UserID
 
 	oldTags, tagerr := qs.tagCommon.GetObjectEntityTag(ctx, question.ID)
 	if tagerr != nil {
@@ -332,14 +504,23 @@ func (qs *QuestionService) UpdateQuestion(ctx context.Context, req *schema.Quest
 		return questionInfo, tagerr
 	}
 
-	// If it's not admin
-	if !req.IsAdmin {
-		//CheckChangeTag
-
-		CheckTag, CheckTaglist := qs.CheckChangeReservedTag(ctx, oldTags, Tags)
-		if !CheckTag {
+	// if user can not use reserved tag, old reserved tag can not be removed and new reserved tag can not be added.
+	if !req.CanUseReservedTag {
+		CheckOldTag, CheckNewTag, CheckOldTaglist, CheckNewTaglist := qs.CheckChangeReservedTag(ctx, oldTags, Tags)
+		if !CheckOldTag {
 			errMsg := fmt.Sprintf(`The reserved tag "%s" must be present.`,
-				strings.Join(CheckTaglist, ","))
+				strings.Join(CheckOldTaglist, ","))
+			errorlist := make([]*validator.FormErrorField, 0)
+			errorlist = append(errorlist, &validator.FormErrorField{
+				ErrorField: "tags",
+				ErrorMsg:   errMsg,
+			})
+			err = errors.BadRequest(reason.RequestFormatError).WithMsg(errMsg)
+			return errorlist, err
+		}
+		if !CheckNewTag {
+			errMsg := fmt.Sprintf(`"%s" can only be used by moderators.`,
+				strings.Join(CheckNewTaglist, ","))
 			errorlist := make([]*validator.FormErrorField, 0)
 			errorlist = append(errorlist, &validator.FormErrorField{
 				ErrorField: "tags",
@@ -358,7 +539,7 @@ func (qs *QuestionService) UpdateQuestion(ctx context.Context, req *schema.Quest
 		errorlist := make([]*validator.FormErrorField, 0)
 		errorlist = append(errorlist, &validator.FormErrorField{
 			ErrorField: "tags",
-			ErrorMsg:   translator.GlobalTrans.Tr(handler.GetLangByCtx(ctx), reason.RecommendTagEnter),
+			ErrorMsg:   translator.Tr(handler.GetLangByCtx(ctx), reason.RecommendTagEnter),
 		})
 		err = errors.BadRequest(reason.RecommendTagEnter)
 		return errorlist, err
@@ -373,7 +554,7 @@ func (qs *QuestionService) UpdateQuestion(ctx context.Context, req *schema.Quest
 		Log:      req.EditSummary,
 	}
 
-	if req.NoNeedReview || req.IsAdmin || dbinfo.UserID == req.UserID {
+	if req.NoNeedReview {
 		canUpdate = true
 	}
 
@@ -429,8 +610,15 @@ func (qs *QuestionService) GetQuestion(ctx context.Context, questionID, userID s
 	if err != nil {
 		return
 	}
+	if question.Status != entity.QuestionStatusClosed {
+		per.CanReopen = false
+	}
+	if question.Status == entity.QuestionStatusClosed {
+		per.CanClose = false
+	}
+	question.Description = htmltext.FetchExcerpt(question.HTML, "...", 240)
 	question.MemberActions = permission.GetQuestionPermission(ctx, userID, question.UserID,
-		per.CanEdit, per.CanDelete, per.CanClose)
+		per.CanEdit, per.CanDelete, per.CanClose, per.CanReopen)
 	return question, nil
 }
 
@@ -449,7 +637,7 @@ func (qs *QuestionService) ChangeTag(ctx context.Context, objectTagData *schema.
 	return qs.tagCommon.ObjectChangeTag(ctx, objectTagData)
 }
 
-func (qs *QuestionService) CheckChangeReservedTag(ctx context.Context, oldobjectTagData, objectTagData []*entity.Tag) (bool, []string) {
+func (qs *QuestionService) CheckChangeReservedTag(ctx context.Context, oldobjectTagData, objectTagData []*entity.Tag) (bool, bool, []string, []string) {
 	return qs.tagCommon.CheckChangeReservedTag(ctx, oldobjectTagData, objectTagData)
 }
 
@@ -463,19 +651,20 @@ func (qs *QuestionService) SearchUserList(ctx context.Context, userName, order s
 	if !Exist {
 		return userlist, 0, nil
 	}
-	search := &schema.QuestionSearch{}
-	search.Order = order
+	search := &schema.QuestionPageReq{}
+	search.OrderCond = order
 	search.Page = page
 	search.PageSize = pageSize
-	search.UserID = userinfo.ID
-	questionlist, count, err := qs.SearchList(ctx, search, loginUserID)
+	search.UserIDBeSearched = userinfo.ID
+	search.LoginUserID = loginUserID
+	questionlist, count, err := qs.GetQuestionPage(ctx, search)
 	if err != nil {
 		return userlist, 0, err
 	}
 	for _, item := range questionlist {
 		info := &schema.UserQuestionInfo{}
 		_ = copier.Copy(info, item)
-		status, ok := entity.CmsQuestionSearchStatusIntToString[item.Status]
+		status, ok := entity.AdminQuestionSearchStatusIntToString[item.Status]
 		if ok {
 			info.Status = status
 		}
@@ -586,12 +775,13 @@ func (qs *QuestionService) SearchUserTopList(ctx context.Context, userName strin
 	if !Exist {
 		return userQuestionlist, userAnswerlist, nil
 	}
-	search := &schema.QuestionSearch{}
-	search.Order = "score"
+	search := &schema.QuestionPageReq{}
+	search.OrderCond = "score"
 	search.Page = 0
 	search.PageSize = 5
-	search.UserID = userinfo.ID
-	questionlist, _, err := qs.SearchList(ctx, search, loginUserID)
+	search.UserIDBeSearched = userinfo.ID
+	search.LoginUserID = loginUserID
+	questionlist, _, err := qs.GetQuestionPage(ctx, search)
 	if err != nil {
 		return userQuestionlist, userAnswerlist, err
 	}
@@ -652,7 +842,7 @@ func (qs *QuestionService) SearchByTitleLike(ctx context.Context, title string, 
 		item.AnswerCount = question.AnswerCount
 		item.CollectionCount = question.CollectionCount
 		item.FollowCount = question.FollowCount
-		status, ok := entity.CmsQuestionSearchStatusIntToString[question.Status]
+		status, ok := entity.AdminQuestionSearchStatusIntToString[question.Status]
 		if ok {
 			item.Status = status
 		}
@@ -666,61 +856,68 @@ func (qs *QuestionService) SearchByTitleLike(ctx context.Context, title string, 
 }
 
 // SimilarQuestion
-func (qs *QuestionService) SimilarQuestion(ctx context.Context, questionID string, loginUserID string) ([]*schema.QuestionInfo, int64, error) {
-	list := make([]*schema.QuestionInfo, 0)
+func (qs *QuestionService) SimilarQuestion(ctx context.Context, questionID string, loginUserID string) ([]*schema.QuestionPageResp, int64, error) {
 	question, err := qs.questioncommon.Info(ctx, questionID, loginUserID)
 	if err != nil {
-		return list, 0, nil
+		return nil, 0, nil
 	}
 	tagNames := make([]string, 0, len(question.Tags))
 	for _, tag := range question.Tags {
 		tagNames = append(tagNames, tag.SlugName)
 	}
-	search := &schema.QuestionSearch{}
-	search.Order = "frequent"
+	search := &schema.QuestionPageReq{}
+	search.OrderCond = "frequent"
 	search.Page = 0
 	search.PageSize = 6
 	if len(tagNames) > 0 {
 		search.Tag = tagNames[0]
 	}
-	return qs.SearchList(ctx, search, loginUserID)
+	search.LoginUserID = loginUserID
+	return qs.GetQuestionPage(ctx, search)
 }
 
-// SearchList
-func (qs *QuestionService) SearchList(ctx context.Context, req *schema.QuestionSearch, loginUserID string) ([]*schema.QuestionInfo, int64, error) {
+// GetQuestionPage query questions page
+func (qs *QuestionService) GetQuestionPage(ctx context.Context, req *schema.QuestionPageReq) (
+	questions []*schema.QuestionPageResp, total int64, err error) {
+	questions = make([]*schema.QuestionPageResp, 0)
+
+	// query by tag condition
 	if len(req.Tag) > 0 {
-		tagInfo, has, err := qs.tagCommon.GetTagBySlugName(ctx, strings.ToLower(req.Tag))
+		tagInfo, exist, err := qs.tagCommon.GetTagBySlugName(ctx, strings.ToLower(req.Tag))
 		if err != nil {
-			log.Error("tagCommon.GetTagListByNames error", err)
+			return nil, 0, err
 		}
-		if has {
-			req.TagIDs = append(req.TagIDs, tagInfo.ID)
+		if exist {
+			req.TagID = tagInfo.ID
 		}
 	}
-	list := make([]*schema.QuestionInfo, 0)
-	if req.UserName != "" {
-		userinfo, exist, err := qs.userCommon.GetUserBasicInfoByUserName(ctx, req.UserName)
+
+	// query by user condition
+	if req.Username != "" {
+		userinfo, exist, err := qs.userCommon.GetUserBasicInfoByUserName(ctx, req.Username)
 		if err != nil {
-			return list, 0, err
+			return nil, 0, err
 		}
 		if !exist {
-			return list, 0, err
+			return questions, 0, nil
 		}
-		req.UserID = userinfo.ID
+		req.UserIDBeSearched = userinfo.ID
 	}
-	questionList, count, err := qs.questionRepo.SearchList(ctx, req)
+
+	questionList, total, err := qs.questionRepo.GetQuestionPage(ctx, req.Page, req.PageSize,
+		req.UserIDBeSearched, req.TagID, req.OrderCond)
 	if err != nil {
-		return list, count, err
+		return nil, 0, err
 	}
-	list, err = qs.questioncommon.ListFormat(ctx, questionList, loginUserID)
+	questions, err = qs.questioncommon.FormatQuestionsPage(ctx, questionList, req.LoginUserID, req.OrderCond)
 	if err != nil {
-		return list, count, err
+		return nil, 0, err
 	}
-	return list, count, nil
+	return questions, total, nil
 }
 
 func (qs *QuestionService) AdminSetQuestionStatus(ctx context.Context, questionID string, setStatusStr string) error {
-	setStatus, ok := entity.CmsQuestionSearchStatus[setStatusStr]
+	setStatus, ok := entity.AdminQuestionSearchStatus[setStatusStr]
 	if !ok {
 		return fmt.Errorf("question status does not exist")
 	}
@@ -775,10 +972,10 @@ func (qs *QuestionService) AdminSetQuestionStatus(ctx context.Context, questionI
 	return nil
 }
 
-func (qs *QuestionService) CmsSearchList(ctx context.Context, search *schema.CmsQuestionSearch, loginUserID string) ([]*schema.AdminQuestionInfo, int64, error) {
+func (qs *QuestionService) AdminSearchList(ctx context.Context, search *schema.AdminQuestionSearch, loginUserID string) ([]*schema.AdminQuestionInfo, int64, error) {
 	list := make([]*schema.AdminQuestionInfo, 0)
 
-	status, ok := entity.CmsQuestionSearchStatus[search.StatusStr]
+	status, ok := entity.AdminQuestionSearchStatus[search.StatusStr]
 	if ok {
 		search.Status = status
 	}
@@ -786,7 +983,7 @@ func (qs *QuestionService) CmsSearchList(ctx context.Context, search *schema.Cms
 	if search.Status == 0 {
 		search.Status = 1
 	}
-	dblist, count, err := qs.questionRepo.CmsSearchList(ctx, search)
+	dblist, count, err := qs.questionRepo.AdminSearchList(ctx, search)
 	if err != nil {
 		return list, count, err
 	}
@@ -814,11 +1011,11 @@ func (qs *QuestionService) CmsSearchList(ctx context.Context, search *schema.Cms
 	return list, count, nil
 }
 
-// CmsSearchList
-func (qs *QuestionService) CmsSearchAnswerList(ctx context.Context, search *entity.CmsAnswerSearch, loginUserID string) ([]*schema.AdminAnswerInfo, int64, error) {
+// AdminSearchList
+func (qs *QuestionService) AdminSearchAnswerList(ctx context.Context, search *entity.AdminAnswerSearch, loginUserID string) ([]*schema.AdminAnswerInfo, int64, error) {
 	answerlist := make([]*schema.AdminAnswerInfo, 0)
 
-	status, ok := entity.CmsAnswerSearchStatus[search.StatusStr]
+	status, ok := entity.AdminAnswerSearchStatus[search.StatusStr]
 	if ok {
 		search.Status = status
 	}
@@ -826,7 +1023,7 @@ func (qs *QuestionService) CmsSearchAnswerList(ctx context.Context, search *enti
 	if search.Status == 0 {
 		search.Status = 1
 	}
-	dblist, count, err := qs.questioncommon.AnswerCommon.CmsSearchList(ctx, search)
+	dblist, count, err := qs.questioncommon.AnswerCommon.AdminSearchList(ctx, search)
 	if err != nil {
 		return answerlist, count, err
 	}
@@ -871,4 +1068,55 @@ func (qs *QuestionService) changeQuestionToRevision(ctx context.Context, questio
 		questionRevision.Tags = append(questionRevision.Tags, item)
 	}
 	return questionRevision, nil
+}
+
+func (qs *QuestionService) SitemapCron(ctx context.Context) {
+	data := &schema.SiteMapList{}
+	questionNum, err := qs.questionRepo.GetQuestionCount(ctx)
+	if err != nil {
+		log.Error("GetQuestionCount error", err)
+		return
+	}
+	if questionNum <= schema.SitemapMaxSize {
+		questionIDList, err := qs.questionRepo.GetQuestionIDsPage(ctx, 0, int(questionNum))
+		if err != nil {
+			log.Error("GetQuestionIDsPage error", err)
+			return
+		}
+		data.QuestionIDs = questionIDList
+
+	} else {
+		nums := make([]int, 0)
+		totalpages := int(math.Ceil(float64(questionNum) / float64(schema.SitemapMaxSize)))
+		for i := 1; i <= totalpages; i++ {
+			siteMapPagedata := &schema.SiteMapPageList{}
+			nums = append(nums, i)
+			questionIDList, err := qs.questionRepo.GetQuestionIDsPage(ctx, i, int(schema.SitemapMaxSize))
+			if err != nil {
+				log.Error("GetQuestionIDsPage error", err)
+				return
+			}
+			siteMapPagedata.PageData = questionIDList
+			if setCacheErr := qs.SetCache(ctx, fmt.Sprintf(schema.SitemapPageCachekey, i), siteMapPagedata); setCacheErr != nil {
+				log.Errorf("set sitemap cron SetCache failed: %s", setCacheErr)
+			}
+		}
+		data.MaxPageNum = nums
+	}
+	if setCacheErr := qs.SetCache(ctx, schema.SitemapCachekey, data); setCacheErr != nil {
+		log.Errorf("set sitemap cron SetCache failed: %s", setCacheErr)
+	}
+}
+
+func (qs *QuestionService) SetCache(ctx context.Context, cachekey string, info interface{}) error {
+	infoStr, err := json.Marshal(info)
+	if err != nil {
+		return errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+	}
+
+	err = qs.data.Cache.SetString(ctx, cachekey, string(infoStr), schema.DashBoardCacheTime)
+	if err != nil {
+		return errors.InternalServer(reason.UnknownError).WithError(err).WithStack()
+	}
+	return nil
 }

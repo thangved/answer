@@ -181,14 +181,14 @@ const TagSelector: FC<IProps> = ({
       onFocus={onFocus}
       onBlur={onBlur}
       onKeyDown={handleKeyDown}>
-      <div className="d-flex flex-wrap mx-n1">
+      <div className="d-flex flex-wrap m-n1">
         {initialValue?.map((item, index) => {
           return (
             <Button
               key={item.slug_name}
               className={classNames(
                 'm-1 text-nowrap d-flex align-items-center',
-                index === repeatIndex && 'warning',
+                index === repeatIndex && 'bg-fade-out',
               )}
               variant={`outline-${
                 item.reserved ? 'danger' : item.recommend ? 'dark' : 'secondary'
@@ -253,7 +253,7 @@ const TagSelector: FC<IProps> = ({
                   variant="link"
                   className="px-3 btn-no-border w-100 text-start"
                   onClick={() => {
-                    tagModal.onShow();
+                    tagModal.onShow(tag);
                   }}>
                   + {t('create_btn')}
                 </Button>

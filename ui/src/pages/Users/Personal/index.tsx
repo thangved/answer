@@ -3,7 +3,8 @@ import { Container, Row, Col, Button } from 'react-bootstrap';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router-dom';
 
-import { Pagination, FormatTime, PageTitle, Empty } from '@/components';
+import { usePageTags } from '@/hooks';
+import { Pagination, FormatTime, Empty } from '@/components';
 import { loggedUserInfoStore } from '@/stores';
 import {
   usePersonalInfoByName,
@@ -50,9 +51,11 @@ const Personal: FC = () => {
     pageTitle = `${userInfo.info.display_name} (${userInfo.info.username})`;
   }
   const { count = 0, list = [] } = listData?.[tabName] || {};
+  usePageTags({
+    title: pageTitle,
+  });
   return (
     <Container className="pt-4 mt-2 mb-5">
-      <PageTitle title={pageTitle} />
       <Row className="justify-content-center">
         {userInfo?.info?.status !== 'normal' && userInfo?.info?.status_msg && (
           <Alert data={userInfo?.info.status_msg} />
@@ -106,7 +109,7 @@ const Personal: FC = () => {
           {!list?.length && !isLoading && <Empty />}
 
           {count > 0 && (
-            <div className="d-flex justify-content-center border-top py-4">
+            <div className="d-flex justify-content-center py-4">
               <Pagination
                 pageSize={30}
                 totalSize={count || 0}
